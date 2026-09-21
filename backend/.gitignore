@@ -1,5 +1,6 @@
 # test_prototype/backend/.gitignore
 
 .env
+.env.*
 __pycache__/
 *.pyc
