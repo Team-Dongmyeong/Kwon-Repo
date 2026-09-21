@@ -1,0 +1,6 @@
+signup.jsx, login.jsx 로컬주소 백엔드 배포버전 적용
+주소: https://kwon-backend.onrender.com
+
+signup과 login 파일의 로컬호스트 url을 백엔드 주소로 변경
+
+[https://capstone-project-pied-seven.vercel.app](https://capstone-project-pied-seven.vercel.app) << supa db의 authentification > url configuration, redirect url서 변경(가서 진행)
