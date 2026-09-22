@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans transition-colors duration-150;
+    font-weight: 450;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  :focus-visible {
+    outline: 2px solid #cf4500;
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  .eyebrow-label {
+    @apply inline-flex items-center gap-2 text-eyebrow uppercase text-ink-soft;
+  }
+
+  .btn-primary {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-btn bg-ink px-6 py-2.5 text-nav text-canvas shadow-1 transition-transform duration-150 ease-out hover:-translate-y-0.5 hover:bg-ink-2 active:translate-y-0;
+  }
+
+  .btn-secondary {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-btn border-[1.5px] border-ink bg-white px-6 py-2.5 text-nav text-ink transition-transform duration-150 ease-out hover:-translate-y-0.5 hover:bg-canvas-lift active:translate-y-0;
+  }
+
+  /* 로그인/회원가입 등 "지금 바로 행동"을 유도하는 핵심 CTA 전용 강조 버튼 —
+     서비스 시그널 컬러(coral)를 배경에 직접 채워 검정 버튼과 구분되는 강한 대비를 줌. */
+  .btn-accent {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-btn bg-coral px-6 py-2.5 text-nav text-white shadow-1 transition-transform duration-150 ease-out hover:-translate-y-0.5 hover:bg-coral-deep active:translate-y-0 disabled:pointer-events-none disabled:opacity-60;
+  }
+}
+
+/* 로그인 후 앱 화면(마이페이지 탭 전환, 페이지 이동)에서 콘텐츠가 아래에서
+   위로 스르륵 올라오며 나타나는 진입 애니메이션. React가 key를 바꿔 컴포넌트를
+   다시 마운트할 때마다(탭 전환 등) 재생됨. */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.4s ease-out both;
+}
+
+/* 마이페이지 "간단 진단 테스트" 같은 오른쪽 슬라이드 패널이 화면 가장자리에서
+   스르륵 들어오는 진입 애니메이션. */
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.25s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
