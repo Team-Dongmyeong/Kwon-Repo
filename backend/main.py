@@ -23,7 +23,7 @@ app = FastAPI(title="마음잇기 Chat API")
 # (예: 다른 브랜치 프리뷰 배포 주소 등) 코드 수정 없이 늘릴 수 있음.
 _default_origins = [
     "http://localhost:5173",
-    "kwon-repo-6mne.vercel.app",
+    "https://kwon-repo-6mne.vercel.app"
 ]
 _extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 allow_origins = _default_origins + _extra_origins
