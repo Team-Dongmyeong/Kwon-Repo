@@ -50,3 +50,67 @@ export const SUB_JOBS_BY_CATEGORY = {
   ],
   'MD/상품기획': ['MD', '콘텐츠마케터', '홍보', '온라인마케터', '직무공통'],
 }
+
+// 지역 — Jobs.jsx, 마이페이지(선호 지역 입력) 등 여러 화면이 같이 써서 여기로 모음.
+export const ALL_REGION = '전체 지역'
+export const REMOTE_REGION = '원격/재택'
+
+// 그룹 구분(특별시·광역시 / 도) 없이 17개 지역을 한 줄로 쭉 보여줌.
+// value(필터링용 짧은 표기, job.location과 대조됨)와 label(드롭다운에 보여줄 공식
+// 명칭)을 분리해뒀어요 — value를 '서울특별시'처럼 통째로 바꾸면 '서울 강남구' 같은
+// 더미 location 문자열과 안 겹쳐서 검색 결과가 0건이 되니, 화면에 보이는 이름만 label로
+// 바꿔서 씁니다.
+export const REGIONS = [
+  { value: '서울', label: '서울특별시' },
+  { value: '부산', label: '부산광역시' },
+  { value: '대구', label: '대구광역시' },
+  { value: '인천', label: '인천광역시' },
+  { value: '광주', label: '광주광역시' },
+  { value: '대전', label: '대전광역시' },
+  { value: '울산', label: '울산광역시' },
+  { value: '세종', label: '세종특별자치시' },
+  { value: '경기', label: '경기도' },
+  { value: '강원', label: '강원특별자치도' },
+  { value: '충북', label: '충청북도' },
+  { value: '충남', label: '충청남도' },
+  { value: '전북', label: '전북특별자치도' },
+  { value: '전남', label: '전라남도' },
+  { value: '경북', label: '경상북도' },
+  { value: '경남', label: '경상남도' },
+  { value: '제주', label: '제주특별자치도' },
+]
+
+// 마이페이지 "내 정보" 카드의 경력 구분 입력(사용자 본인의 경력 상태) + (나중에)
+// 스마트픽 조회 조건용. 공유 레포(share_project)에서 경민님이 먼저 만들어둔 값과
+// 이름/구성을 맞춤 — 바로 아래 JOB_CAREER_LEVELS(채용공고 자체의 모집 경력 필터)와는
+// 이름은 비슷해도 완전히 다른 축이라 헷갈리지 않게 분리해둠.
+// TODO(백엔드 연동 전): 지금은 PreferenceContext에 프론트 로컬 상태로만 저장돼요.
+// 병철님이 profiles에 career_level 컬럼을 추가하고 GET/PATCH /me가 만들어지면,
+// PreferenceContext의 careerLevel 저장 지점만 그 API 호출로 바꾸면 됨.
+export const CAREER_LEVELS = ['무관', '신입', '경력']
+
+// 채용공고 리스트 필터(Jobs.jsx)에서 쓰는 "이 공고가 모집하는 경력" 필터 — 위
+// CAREER_LEVELS(내 프로필의 경력 구분)와는 다른 축이라 이름을 분리함. 실제 공고
+// 데이터(job.type)에 '신입'/'인턴'만 나타나서 이 두 값만 둠.
+export const JOB_CAREER_LEVELS = ['신입', '인턴']
+
+// 대분류 하나가 실제로는 NCS 대분류 코드 여러 개로 이루어진 경우가 있음(예: '디자인'
+// 안에 '문화예술디자인방송'뿐 아니라 패션디자이너 때문에 '섬유의복'도 섞여 있음).
+// 이 값은 공고 제목을 보고 "추정"하는 세부직무와 달리, 실제로 어떤 NCS 코드로 그
+// 공고를 수집했는지를 그대로 반영한 값이라(job-fetch/fetch_jobs_to_mock.py의
+// NCS_CODES_BY_CATEGORY와 1:1 대응) 필터로 써도 안전함. 각 공고의 ncsGroup
+// 필드(jobsReal.js)와 매칭해서 씀 — 대분류 안에 코드가 1개뿐이면(IT/SW, 공공·복지)
+// 나눌 게 없어서 이 필터 자체를 안 보여줘도 됨(Jobs.jsx에서 처리).
+export const NCS_GROUPS_BY_CATEGORY = {
+  'IT/SW': ['정보통신'],
+  '디자인': ['문화예술디자인방송', '섬유의복'],
+  '공공·복지': ['사회복지종교'],
+  '식·음료': ['음식서비스', '식품가공'],
+  'MD/상품기획': ['영업판매', '경영회계사무'],
+}
+
+// 추천 엔진(PreferenceContext)이 "추천 직업 3개"를 고를 때 쓰는 평탄화된 후보 목록.
+// 각 대분류의 '직무공통'은 특정 직업명이 아니라 포괄 표시용이라 추천 후보에서는 제외함.
+export const ALL_SUB_JOBS = Object.entries(SUB_JOBS_BY_CATEGORY).flatMap(([category, subs]) =>
+  subs.filter((sub) => sub !== '직무공통').map((subJob) => ({ subJob, category }))
+)

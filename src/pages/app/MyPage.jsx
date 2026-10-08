@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Heartbeat, ChatCircleDots, Briefcase, UserCircle, Megaphone, Compass } from '@phosphor-icons/react'
 import { useAuth } from '../../context/AuthContext.jsx'
 import { usePreference } from '../../context/PreferenceContext.jsx'
+import { ALL_REGION, REMOTE_REGION, REGIONS, CAREER_LEVELS } from '../../constants/jobCategories.js'
 
 // 전부 더미 데이터 — 백엔드(kcELECTRA/SBERT/RAG) 연동 전 화면 확인용.
 const EMOTION_PATTERN = [
@@ -36,24 +37,6 @@ const CHAT_LOG = [
   { tag: '심리 상담', title: '자존감 케어 및 학업 스트레스 상담 세션', meta: '2026.09.07 · 감정 상태: 안정' },
   { tag: '직업 추천', title: 'SBERT 기반 백엔드/AI 직무 적성 매칭 상담', meta: '2026.09.05 · 키워드 매칭 완료' },
   { tag: '심리 상담', title: '일상적 무기력감 극복을 위한 행동 진단', meta: '2026.09.01 · 감정 상태: 피로감 관찰' },
-]
-
-const JOB_MATCHES = [
-  {
-    rate: 94,
-    title: '백엔드 엔지니어 (Backend)',
-    desc: '논리적이고 체계적인 문제 해결 성향에 가장 부합하는 추천 직무예요. Python, FastAPI, 데이터베이스 설계 역량이 강점으로 작용해요.',
-  },
-  {
-    rate: 89,
-    title: '인공지능 / ML 엔지니어',
-    desc: '자연어 처리(NLP)와 문장 분류 모델을 다루는 데 대한 높은 흥미와 적성이 반영된 추천 직무예요.',
-  },
-  {
-    rate: 81,
-    title: '웹 프론트엔드 개발자',
-    desc: '직관적인 UI/UX 구현과 인터랙티브한 화면 설계에 대한 관심이 반영되어 매칭됐어요.',
-  },
 ]
 
 // 개인정보를 맨 앞으로 — 마이페이지에 들어오면 이 탭이 먼저 보이도록.
@@ -230,7 +213,27 @@ export default function MyPage() {
   // 넘겨주기만 하면 이 화면과 채용공고 스마트픽이 동시에 갱신됨.
   // "진단하기" 박스와 진단 모달은 상단 헤더(Header.jsx)로 옮겨졌음 — 여기서는 값
   // 표시(및 초기화 버튼)만 함.
-  const { preferredCategory, hasPreferenceData, resetPreference } = usePreference()
+  const {
+    preferredCategory,
+    hasPreferenceData,
+    resetPreference,
+    preferredRegion,
+    hasRegionPreference,
+    setPreferredRegion,
+    careerLevel,
+    setCareerLevel,
+    // "추천직업" 탭 전용 — 채용공고 스마트픽과 똑같은 recommendedJobs(세부직무 TOP3)를
+    // 그대로 구독해서 씀. 이 값이 바뀌면(진단/채팅 결과 갱신) 이 탭과 스마트픽이
+    // 항상 같은 3개를 동시에 보여주게 됨 — 둘 다 PreferenceContext라는 같은 소스를
+    // 보고 있어서 별도로 동기화해줄 코드가 필요 없음.
+    recommendedJobs,
+    hasSubJobPreferenceData,
+    combinedSubJobScores,
+  } = usePreference()
+  // 선호 근무 지역 읽기 전용 표시용 — select의 value는 짧은 표기('서울')라서, 보여줄
+  // 땐 REGIONS의 공식 명칭(label, 예: '서울특별시')으로 바꿔서 보여줌. REGIONS에 없는
+  // 값(ALL_REGION/REMOTE_REGION)은 그 문자열 자체가 이미 표시용 라벨이라 그대로 씀.
+  const preferredRegionLabel = REGIONS.find((item) => item.value === preferredRegion)?.label ?? preferredRegion
 
   function handleProfileSubmit(event) {
     event.preventDefault()
@@ -345,24 +348,40 @@ export default function MyPage() {
           </div>
         )}
 
-        {activeTab === 'jobs' && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {JOB_MATCHES.map((job) => (
-              <div key={job.title} className="flex flex-col justify-between rounded-card bg-white p-6 shadow-1">
-                <div>
-                  <span className="inline-flex rounded-pill bg-coral-bg px-3 py-1 text-[12px] font-bold text-coral-deep">
-                    매칭률 {job.rate}%
-                  </span>
-                  <h3 className="mt-3 text-h3 text-[17px] text-ink">{job.title}</h3>
-                  <p className="mt-2 text-[13px] leading-relaxed text-slate">{job.desc}</p>
-                </div>
-                <Link to="/home/jobs" className="btn-secondary mt-5">
-                  공고 확인하기
-                </Link>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* 추천직업 탭 — 더미데이터가 아니라 채용공고 스마트픽과 완전히 같은
+            recommendedJobs(PreferenceContext)를 그대로 보여줌. 진단 퀴즈를 풀거나
+            채팅 분석 결과가 반영되면(지금은 Jobs.jsx의 테스트 칩으로도 흉내낼 수
+            있음) 이 탭과 스마트픽이 항상 동시에 같은 3개로 갱신됨. */}
+        {activeTab === 'jobs' &&
+          (hasSubJobPreferenceData ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {recommendedJobs.map(({ subJob, category }) => {
+                const rate = Math.round((combinedSubJobScores[subJob] ?? 0) * 100)
+                return (
+                  <div key={subJob} className="flex flex-col justify-between rounded-card bg-white p-6 shadow-1">
+                    <div>
+                      <span className="inline-flex rounded-pill bg-coral-bg px-3 py-1 text-[12px] font-bold text-coral-deep">
+                        매칭률 {rate}%
+                      </span>
+                      <h3 className="mt-3 text-h3 text-[17px] text-ink">{subJob}</h3>
+                      <p className="mt-2 text-[13px] leading-relaxed text-slate">
+                        {category} 분야 진단·채팅 결과를 바탕으로 추천된 직무예요.
+                      </p>
+                    </div>
+                    <Link to={`/home/jobs?job=${encodeURIComponent(subJob)}`} className="btn-secondary mt-5">
+                      공고 확인하기
+                    </Link>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="rounded-card bg-white p-10 text-center shadow-1">
+              <p className="text-body text-slate">
+                아직 진단 결과가 없어요. 화면 상단 "진단하기"에서 간단 진단을 먼저 해보세요.
+              </p>
+            </div>
+          ))}
 
         {/* 개인정보 탭 — 병철이 만든 마이페이지 스크린샷의 "3개 카드" 레이아웃
             구조(프로필 카드 / 정보 카드 / 빠른 메뉴 카드)만 가져오고, 색상은
@@ -421,6 +440,25 @@ export default function MyPage() {
                       )}
                     </dd>
                   </div>
+                  <div className="flex items-center justify-between border-b border-ink/8 pb-3">
+                    <dt className="text-[13px] text-slate">선호 근무 지역</dt>
+                    <dd className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+                      {hasRegionPreference ? preferredRegionLabel : <span className="text-slate">미설정</span>}
+                      {hasRegionPreference && (
+                        <button
+                          type="button"
+                          onClick={() => setPreferredRegion(ALL_REGION)}
+                          className="text-[12px] font-bold text-slate hover:text-ink hover:underline"
+                        >
+                          초기화
+                        </button>
+                      )}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-ink/8 pb-3">
+                    <dt className="text-[13px] text-slate">경력 구분</dt>
+                    <dd className="text-[14px] font-semibold text-ink">{careerLevel}</dd>
+                  </div>
                   <div className="flex items-center justify-between">
                     <dt className="text-[13px] text-slate">알림 수신</dt>
                     <dd className="text-[14px] font-semibold text-ink">{notifyOn ? '동의함' : '동의 안 함'}</dd>
@@ -435,6 +473,38 @@ export default function MyPage() {
                     선호 추천 분야는 적성 검사·채팅 상담 결과로 자동 설정돼요. 화면 상단 "진단하기" 박스에서
                     바로 갱신해볼 수 있어요.
                   </p>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    선호 근무 지역
+                    <select
+                      value={preferredRegion}
+                      onChange={(event) => setPreferredRegion(event.target.value)}
+                      className="mt-2 w-full rounded-btn border-[1.5px] border-taupe bg-white px-4 py-2.5 text-[14px] font-normal text-ink focus:border-ink focus:outline-none"
+                    >
+                      <option value={ALL_REGION}>{ALL_REGION}</option>
+                      {REGIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                      <option value={REMOTE_REGION}>{REMOTE_REGION}</option>
+                    </select>
+                  </label>
+
+                  <label className="block text-[13px] font-semibold text-ink">
+                    경력 구분
+                    <select
+                      value={careerLevel}
+                      onChange={(event) => setCareerLevel(event.target.value)}
+                      className="mt-2 w-full rounded-btn border-[1.5px] border-taupe bg-white px-4 py-2.5 text-[14px] font-normal text-ink focus:border-ink focus:outline-none"
+                    >
+                      {CAREER_LEVELS.map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
                   <label className="flex items-center justify-between text-[13px] font-semibold text-ink">
                     알림 수신 동의

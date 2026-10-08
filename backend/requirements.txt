@@ -4,3 +4,4 @@ supabase
 pydantic
 openai
 python-dotenv
+requests

@@ -45,11 +45,14 @@ export default function Header() {
   // 없는 화면(로그인 전 랜딩)에서도 안전한 기본값을 돌려주게 되어있어서, Header가
   // 로그인/비로그인 양쪽에서 렌더링돼도 여기서 훅을 그냥 호출해도 문제없음 —
   // 다만 박스 자체는 isAuthenticated일 때만 보여줌(로그인 전엔 진단할 결과가 없음).
-  const { preferredCategory, hasPreferenceData, setTestResult } = usePreference()
+  const { preferredCategory, hasPreferenceData, setTestResult, setTestSubJobResult } = usePreference()
   const [quizOpen, setQuizOpen] = useState(false)
 
-  function handleQuizSubmit(vector) {
-    setTestResult(vector)
+  // 대분류 벡터는 "선호 추천 분야"(preferredCategory)로, 세부직무 벡터는 채용공고
+  // 스마트픽의 "추천 직업 3개"(recommendedJobs)로 — 진단 퀴즈 하나로 둘 다 갱신됨.
+  function handleQuizSubmit(categoryVector, subJobVector) {
+    setTestResult(categoryVector)
+    setTestSubJobResult(subJobVector)
     setQuizOpen(false)
   }
 
