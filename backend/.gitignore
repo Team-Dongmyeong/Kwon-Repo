@@ -2,5 +2,7 @@
 
 .env
 .env.*
+models/
 __pycache__/
 *.pyc
+venv/
