@@ -5,4 +5,12 @@
 models/
 __pycache__/
 *.pyc
+<<<<<<< Updated upstream
 venv/
+=======
+venv/
+.venv/
+models/
+*_backup.py
+*_merged_backup.py
+>>>>>>> Stashed changes
