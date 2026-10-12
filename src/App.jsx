@@ -6,6 +6,7 @@ import AppLayout from './pages/app/AppLayout.jsx'
 import Home from './pages/app/Home.jsx'
 import Chat from './pages/app/Chat.jsx'
 import Jobs from './pages/app/Jobs.jsx'
+import Policies from './pages/app/Policies.jsx'   // ← 추가
 import Notice from './pages/app/Notice.jsx'
 import Guide from './pages/app/Guide.jsx'
 import Faq from './pages/app/Faq.jsx'
@@ -22,6 +23,8 @@ export default function App() {
         <Route index element={<Home />} />
         <Route path="chat" element={<Chat />} />
         <Route path="jobs" element={<Jobs />} />
+        <Route path="jobs" element={<Jobs />} />
+        <Route path="policies" element={<Policies />} />   {/* ← 추가 */}
         <Route path="notice" element={<Notice />} />
         <Route path="guide" element={<Guide />} />
         <Route path="faq" element={<Faq />} />

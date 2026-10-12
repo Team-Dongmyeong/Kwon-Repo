@@ -26,6 +26,7 @@ const appNavItems = [
   { label: '홈', to: '/home', end: true },
   { label: '채팅', to: '/home/chat' },
   { label: '채용공고', to: '/home/jobs' },
+  { label: '청년정책', to: '/home/policies' },
   { label: '공지사항', to: '/home/notice' },
   { label: '이용가이드', to: '/home/guide' },
   { label: 'FAQ', to: '/home/faq' },

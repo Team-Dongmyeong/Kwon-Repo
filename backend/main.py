@@ -1,10 +1,11 @@
 import os
+import re
 from typing import Optional
 
 # ↓↓↓ [채용공고 기능 추가] API_new에서 가져온 4줄 — build_job_list()가 쓰는 표준 라이브러리들
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import requests
 # ↑↑↑
  
@@ -578,4 +579,306 @@ def get_jobs():
         "jobs": jobs,
         "count": len(jobs),
         "cachedAt": datetime.fromtimestamp(_jobs_cache["fetched_at"]).isoformat(timespec="seconds"),
+    }
+
+# ============================================================
+# 청년정책 (/api/policies) — 온통청년 청년정책 Open API(getPlcy) 연동.
+# 채용공고(/api/jobs)와 같은 방식: DB 없이 요청이 올 때마다(캐시 TTL 안에서는
+# 캐시로) 외부 API를 서버에서 직접 호출하고, 우리 화면에 맞게 가공해서 내려줌.
+# 인증키는 프론트에 절대 노출하지 않고 환경변수 YOUTH_API_KEY로만 읽음
+# (로컬은 .env, 배포는 Render "Environment" 탭에 등록).
+# ============================================================
+
+YOUTH_API_KEY = os.getenv("YOUTH_API_KEY", "")
+YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
+YOUTH_UPSTREAM_PAGE_SIZE = 100  # 온통청년 API를 한 번 부를 때 가져오는 정책 수
+YOUTH_RESULT_TARGET = 20  # 화면에 한 번에 내려줄 정책 수(필터 후 기준 최소 목표)
+YOUTH_MAX_UPSTREAM_PAGES_PER_REQUEST = 3  # 필터로 걸러져도 한 요청에서 최대 몇 페이지까지 더 볼지
+YOUTH_CACHE_TTL_SECONDS = 30 * 60
+KST = timezone(timedelta(hours=9))
+
+# zipCd(시군구 법정동 코드 5자리)의 앞 2자리 = 시도 코드
+YOUTH_SIDO_NAMES = {
+    "11": "서울", "26": "부산", "27": "대구", "28": "인천", "29": "광주",
+    "30": "대전", "31": "울산", "36": "세종", "41": "경기", "42": "강원",
+    "51": "강원", "43": "충북", "44": "충남", "45": "전북", "52": "전북",
+    "46": "전남", "47": "경북", "48": "경남", "50": "제주",
+}
+
+# 코드정의서(API코드정보.xlsx) 중 화면에 "지원 대상" 태그로 보여줄 것만 옮김.
+# '제한없음'(0013010, 0049010)은 태그로 보여줄 의미가 없어서 일부러 뺌.
+YOUTH_JOB_CODES = {
+    "0013001": "재직자", "0013002": "자영업자", "0013003": "미취업자", "0013004": "프리랜서",
+    "0013005": "일용근로자", "0013006": "(예비)창업자", "0013007": "단기근로자", "0013008": "영농종사자",
+}
+YOUTH_SCHOOL_CODES = {
+    "0049001": "고졸 미만", "0049002": "고교 재학", "0049003": "고졸 예정", "0049004": "고교 졸업",
+    "0049005": "대학 재학", "0049006": "대졸 예정", "0049007": "대학 졸업", "0049008": "석·박사",
+}
+
+_youth_cache = {}  # (page, query, category) -> {"fetched_at", "items", "total"}
+_youth_cache_lock = threading.Lock()
+
+
+def _youth_to_int(value, default=0) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _youth_clean_url(raw) -> str:
+    cleaned = (raw or "").strip()
+    return cleaned if cleaned.lower().startswith("http") else ""
+
+
+def _youth_parse_apply_period(text: str):
+    """'20260507 ~ 20260607' -> (시작 date, 끝 date). 파싱 못 하면 (None, None)."""
+    parts = [p.strip() for p in (text or "").split("~")]
+    dates = []
+    for p in parts:
+        try:
+            dates.append(datetime.strptime(p, "%Y%m%d").date())
+        except ValueError:
+            dates.append(None)
+    if len(dates) == 2:
+        return dates[0], dates[1]
+    return None, None
+
+
+def _youth_apply_status(item: dict):
+    """(status, deadline_iso, d_day) 반환. status: 상시 / 진행중 / 마감 / 확인필요"""
+    code = (item.get("aplyPrdSeCd") or "").strip()
+    if code == "0057002":
+        return "상시", "", None
+    if code == "0057003":
+        return "마감", "", None
+    _, end = _youth_parse_apply_period(item.get("aplyYmd"))
+    if end is None:
+        return "확인필요", "", None
+    today = datetime.now(KST).date()
+    d_day = (end - today).days
+    if d_day < 0:
+        return "마감", end.isoformat(), d_day
+    return "진행중", end.isoformat(), d_day
+
+
+def _youth_region_info(zip_cd: str):
+    prefixes = sorted({z.strip()[:2] for z in (zip_cd or "").split(",") if len(z.strip()) >= 2})
+    names = []
+    for p in prefixes:
+        n = YOUTH_SIDO_NAMES.get(p)
+        if n and n not in names:
+            names.append(n)
+    if not prefixes or len(names) >= 15:
+        label = "전국"
+    elif len(names) <= 3:
+        label = ", ".join(names)
+    else:
+        label = f"{', '.join(names[:3])} 외 {len(names) - 3}곳"
+    return prefixes, label
+
+
+def _youth_transform(item: dict) -> dict:
+    status, deadline, d_day = _youth_apply_status(item)
+    prefixes, region_label = _youth_region_info(item.get("zipCd"))
+
+    keywords = [k.strip() for k in (item.get("plcyKywdNm") or "").split(",") if k.strip()]
+    org = (item.get("operInstCdNm") or "").strip() or (item.get("sprvsnInstCdNm") or "").strip()
+
+    age_min = _youth_to_int(item.get("sprtTrgtMinAge"))
+    age_max = _youth_to_int(item.get("sprtTrgtMaxAge"))
+    age_unlimited = (item.get("sprtTrgtAgeLmtYn") or "").strip() == "Y" or (age_min == 0 and age_max == 0)
+
+    target_tags = []
+    for code in (item.get("jobCd") or "").split(","):
+        label = YOUTH_JOB_CODES.get(code.strip())
+        if label:
+            target_tags.append(label)
+    for code in (item.get("schoolCd") or "").split(","):
+        label = YOUTH_SCHOOL_CODES.get(code.strip())
+        if label:
+            target_tags.append(label)
+
+    earn_code = (item.get("earnCndSeCd") or "").strip()
+    if earn_code == "0043002":
+        earn_min = _youth_to_int(item.get("earnMinAmt"))
+        earn_max = _youth_to_int(item.get("earnMaxAmt"))
+        income = f"연소득 {earn_min:,}원 ~ {earn_max:,}원" if (earn_min or earn_max) else "연소득 조건 있음"
+    elif earn_code == "0043003":
+        income = (item.get("earnEtcCn") or "").strip() or "기타 소득 조건"
+    else:
+        income = ""
+
+    if (item.get("bizPrdBgngYmd") or "").strip() and (item.get("bizPrdEndYmd") or "").strip():
+        biz_period = f"{item['bizPrdBgngYmd'].strip()} ~ {item['bizPrdEndYmd'].strip()}"
+    else:
+        biz_period = (item.get("bizPrdEtcCn") or "").strip()
+
+    return {
+        "id": item.get("plcyNo"),
+        "name": item.get("plcyNm") or "정책명 없음",
+        "keywords": keywords,
+        "summary": (item.get("plcyExplnCn") or "").strip(),
+        "support": (item.get("plcySprtCn") or "").strip(),
+        "category": (item.get("lclsfNm") or "").strip(),
+        "subCategory": (item.get("mclsfNm") or "").strip(),
+        "org": org,
+        "regionLabel": region_label,
+        "regionCodes": prefixes,
+        "ageMin": None if age_unlimited else age_min,
+        "ageMax": None if age_unlimited else age_max,
+        "targetTags": target_tags,
+        "income": income,
+        "applyPeriod": (item.get("aplyYmd") or "").strip(),
+        "applyStatus": status,
+        "deadline": deadline,
+        "dDay": d_day,
+        "bizPeriod": biz_period,
+        "applyMethod": (item.get("plcyAplyMthdCn") or "").strip(),
+        "screening": (item.get("srngMthdCn") or "").strip(),
+        "documents": (item.get("sbmsnDcmntCn") or "").strip(),
+        "addQualification": (item.get("addAplyQlfcCndCn") or "").strip(),
+        "etc": (item.get("etcMttrCn") or "").strip(),
+        "applyUrl": _youth_clean_url(item.get("aplyUrlAddr")),
+        "refUrl": _youth_clean_url(item.get("refUrlAddr1")) or _youth_clean_url(item.get("refUrlAddr2")),
+    }
+
+
+# 온통청년 사이트의 분류명(금융·복지·문화, 참여·기반)과 코드정의서의 옛 이름(복지문화,
+# 참여권리)이 서로 달라서, API 필터(lclsfNm)에 어떤 철자를 넣어야 결과가 나오는지
+# 확신할 수 없음 — 그래서 후보 이름들을 순서대로 시도해서, 실제로 그 분류 정책이
+# 돌아오는 이름을 찾아 기억해두고 씀(가운뎃점 종류 ･ · ㆍ 차이도 여기서 흡수).
+_YOUTH_CATEGORY_CANDIDATES = {
+    "일자리": ["일자리"],
+    "주거": ["주거"],
+    "교육직업훈련": ["교육･직업훈련", "교육·직업훈련", "교육"],
+    "금융복지문화": ["금융･복지･문화", "금융·복지·문화", "복지문화", "복지･문화"],
+    "참여기반": ["참여･기반", "참여·기반", "참여권리", "참여･권리"],
+}
+_youth_category_resolved = {}
+
+
+def _youth_norm(text: str) -> str:
+    """가운뎃점 종류/공백 차이를 무시하고 비교하려고 구분 문자를 모두 제거."""
+    return re.sub(r"[･·ㆍ・\s]", "", text or "")
+
+
+def _youth_resolve_category(category: str) -> str:
+    if not category:
+        return ""
+    key = _youth_norm(category)
+    if key in _youth_category_resolved:
+        return _youth_category_resolved[key]
+    candidates = _YOUTH_CATEGORY_CANDIDATES.get(key, [category])
+    for cand in candidates:
+        items, _ = _youth_fetch_upstream(1, "", cand)
+        if not items:
+            continue
+        # API가 모르는 lclsfNm을 무시하고 전체를 돌려주는 경우를 걸러내려고,
+        # 실제 돌려받은 정책의 분류명이 후보와 일치하는지도 확인
+        got = _youth_norm(items[0].get("lclsfNm"))
+        want = _youth_norm(cand)
+        if got.startswith(want) or want.startswith(got):
+            _youth_category_resolved[key] = cand
+            return cand
+    print(f"  ⚠ [policies] 분류 '{category}'에 맞는 lclsfNm 값을 찾지 못함 (시도: {candidates})")
+    return candidates[0]
+
+
+def _youth_fetch_upstream(page: int, query: str, category: str):
+    """온통청년 getPlcy 한 페이지 호출 -> (원본 리스트, 전체 건수). 결과는 30분 캐시."""
+    cache_key = (page, query, category)
+    now = time.time()
+    with _youth_cache_lock:
+        cached = _youth_cache.get(cache_key)
+        if cached and (now - cached["fetched_at"]) < YOUTH_CACHE_TTL_SECONDS:
+            return cached["items"], cached["total"]
+
+    params = {
+        "apiKeyNm": YOUTH_API_KEY,
+        "pageNum": page,
+        "pageSize": YOUTH_UPSTREAM_PAGE_SIZE,
+        "rtnType": "json",
+    }
+    if query:
+        params["plcyNm"] = query
+    if category:
+        params["lclsfNm"] = category
+
+    try:
+        res = requests.get(YOUTH_API_URL, params=params, timeout=20)
+        res.raise_for_status()
+        data = res.json()
+    except Exception as e:
+        print(f"  ⚠ [policies] 호출 실패: {e}")
+        raise HTTPException(status_code=502, detail="온통청년 API 호출에 실패했습니다.")
+
+    if data.get("resultCode") != 200:
+        print(f"  ⚠ [policies] API 오류: {data.get('resultMessage')}")
+        raise HTTPException(status_code=502, detail=f"온통청년 API 오류: {data.get('resultMessage')}")
+
+    result = data.get("result") or {}
+    items = result.get("youthPolicyList") or []
+    total = _youth_to_int((result.get("pagging") or {}).get("totCount"))
+
+    with _youth_cache_lock:
+        if len(_youth_cache) > 200:  # 메모리 보호 — 너무 쌓이면 통째로 비움
+            _youth_cache.clear()
+        _youth_cache[cache_key] = {"fetched_at": now, "items": items, "total": total}
+    return items, total
+
+
+@app.get("/api/policies")
+def get_policies(
+    page: int = 1,
+    q: str = "",
+    category: str = "",
+    region: str = "",  # 시도 코드 앞 2자리, 콤마로 여러 개(예: 부산="26", 강원="51,42")
+    age: Optional[int] = None,
+    include_closed: bool = False,
+):
+    if not YOUTH_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="YOUTH_API_KEY 환경변수가 설정되지 않았습니다. Render(또는 로컬 .env)에 등록해주세요.",
+        )
+
+    q = q.strip()
+    category = _youth_resolve_category(category.strip())
+    region_codes = [c.strip() for c in region.split(",") if c.strip()]
+    page = max(1, page)
+
+    collected = []
+    total = 0
+    next_page = None
+    fetched_pages = 0
+    current = page
+    while fetched_pages < YOUTH_MAX_UPSTREAM_PAGES_PER_REQUEST:
+        raw_items, total = _youth_fetch_upstream(current, q, category)
+        fetched_pages += 1
+        for raw in raw_items:
+            policy = _youth_transform(raw)
+            # 승인된 정책만(0044002) — 임시저장/반려 상태는 일반 사용자에게 보이면 안 됨
+            if (raw.get("plcyAprvSttsCd") or "").strip() not in ("", "0044002"):
+                continue
+            if not include_closed and policy["applyStatus"] == "마감":
+                continue
+            if region_codes and policy["regionCodes"] and not any(c in policy["regionCodes"] for c in region_codes):
+                continue
+            if age is not None and policy["ageMin"] is not None:
+                if age < policy["ageMin"] or (policy["ageMax"] and age > policy["ageMax"]):
+                    continue
+            collected.append(policy)
+        has_more = current * YOUTH_UPSTREAM_PAGE_SIZE < total and bool(raw_items)
+        next_page = current + 1 if has_more else None
+        current += 1
+        if len(collected) >= YOUTH_RESULT_TARGET or not has_more:
+            break
+
+    return {
+        "policies": collected,
+        "count": len(collected),
+        "totalCount": total,  # 온통청년 전체 건수(필터 전 기준 — 참고용)
+        "nextPage": next_page,
     }
