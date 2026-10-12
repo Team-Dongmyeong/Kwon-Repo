@@ -151,18 +151,25 @@ export default function Jobs() {
     (_, i) => pageGroupStart + i
   )
 
-  // recommendedJobs = 적성 검사 70% + 채팅 분석 30%로 계산된 "추천 직업 3개"
-  // ([{ subJob, category }, ...] 세부직무 단위). AppLayout에 올려둔 PreferenceProvider를
-  // 앱 내 모든 화면이 같이 구독하기 때문에, 마이페이지 쪽에서 검사/채팅 결과가 반영돼
-  // 이 값이 바뀌면 이 페이지를 벗어나지 않아도(혹은 나중에 다시 들어와도) 아래
-  // smartPickJobs가 자동으로 다시 계산됨.
+  // recommendedJobs = 마이페이지 "내 정보 수정하기"에서 직접 고른 선호 추천 분야
+  // (대분류)를 대표하는 세부직무 최대 3개([{ subJob, category }, ...]).
+  // (2026-10-11 변경) 예전에는 적성 검사 70% + 채팅 분석 30%로 계산됐는데, 이제는
+  // 매칭률(%) 없이 선택한 대분류의 대표 직무만 보여줌. AppLayout에 올려둔
+  // PreferenceProvider를 앱 내 모든 화면이 같이 구독하기 때문에, 마이페이지 쪽에서
+  // 선호 추천 분야를 바꾸면 이 페이지를 벗어나지 않아도(혹은 나중에 다시 들어와도)
+  // 아래 smartPickJobs가 자동으로 다시 계산됨.
   const {
     recommendedJobs,
-    combinedSubJobScores,
     // 마이페이지에서 고른 "선호 근무 지역" — 스마트픽 공고 3건을 추릴 때 이 지역과
     // 일치하는 공고를 우선 배치하는 데 씀(ALL_REGION 기본값일 땐 미설정 취급).
     preferredRegion,
     hasRegionPreference,
+    // 마이페이지에서 고른 "경력 구분" — 선호 근무 지역과 똑같은 방식으로, 이 값과
+    // 일치하는 공고(job.type)를 우선 배치하는 데 씀('무관' 기본값일 땐 미설정 취급).
+    // 이 파일에 이미 같은 이름(careerLevel)의 로컬 필터 상태가 있어서(JOB_CAREER_LEVELS,
+    // '신입'/'인턴' 전용 — 아래 필터 칩용) 겹치지 않게 preferredCareerLevel로 받음.
+    careerLevel: preferredCareerLevel,
+    hasCareerPreference,
   } = usePreference()
 
   // 스마트픽에서 지금 선택된 "추천 직업" 하나 — 기본값은 추천 1순위.
@@ -188,25 +195,25 @@ export default function Jobs() {
   //          분야가 같이 맞는 공고만 뜨도록 고침.
   //   3순위: 그래도 3건이 안 채워질 때만 전체 공고(globalRest)로 채움(항상 3건
   //          보여주기 위한 최후 보루 — 보통 대분류 공고 수가 충분해서 거의 안 씀)
-  // 각 순위 묶음 안에서는 "선호 근무 지역"(마이페이지에서 설정)과 일치하는 공고를
-  // 앞쪽으로 한 번 더 정렬함 — Array.sort는 안정 정렬이라 지역 일치 여부 외의
-  // 원래 순서는 그대로 유지됨.
+  // 각 순위 묶음 안에서는 "선호 근무 지역" + "경력 구분"(둘 다 마이페이지에서 직접
+  // 설정)과 일치하는 공고를 앞쪽으로 한 번 더 정렬함 — 두 조건을 다 만족하면 2점,
+  // 하나만 만족하면 1점으로 점수를 매겨서 내림차순 정렬. Array.sort는 안정 정렬이라
+  // 점수가 같으면 원래 순서는 그대로 유지됨.
   const smartPickJobs = useMemo(() => {
     if (!selectedJob) return []
     const isRegionMatch = (job) => hasRegionPreference && job.location.includes(preferredRegion)
-    const sortByRegion = (jobs) =>
-      hasRegionPreference
-        ? [...jobs].sort((a, b) => Number(isRegionMatch(b)) - Number(isRegionMatch(a)))
-        : jobs
+    const isCareerMatch = (job) => hasCareerPreference && job.type.includes(preferredCareerLevel)
+    const matchScore = (job) => Number(isRegionMatch(job)) + Number(isCareerMatch(job))
+    const sortByPreference = (jobs) => [...jobs].sort((a, b) => matchScore(b) - matchScore(a))
     const matched = jobs.filter((job) => job.subJob === selectedJob)
     const sameCategoryRest = jobs.filter(
       (job) => job.subJob !== selectedJob && job.category === selectedCategory
     )
-    const combined = [...sortByRegion(matched), ...sortByRegion(sameCategoryRest)]
+    const combined = [...sortByPreference(matched), ...sortByPreference(sameCategoryRest)]
     if (combined.length >= 3) return combined.slice(0, 3)
     const globalRest = jobs.filter((job) => job.subJob !== selectedJob && job.category !== selectedCategory)
-    return [...combined, ...sortByRegion(globalRest)].slice(0, 3)
-  }, [jobs, selectedJob, selectedCategory, preferredRegion, hasRegionPreference])
+    return [...combined, ...sortByPreference(globalRest)].slice(0, 3)
+  }, [jobs, selectedJob, selectedCategory, preferredRegion, hasRegionPreference, preferredCareerLevel, hasCareerPreference])
 
   return (
     <div className="space-y-6">
@@ -353,7 +360,10 @@ export default function Jobs() {
         </div>
       </section>
 
-      {/* 스마트픽 — 추천 직업 3개(적성 검사 70% + 채팅 분석 30%) 중 고른 직업의 공고 TOP 3 */}
+      {/* 스마트픽 — 마이페이지에서 직접 고른 선호 추천 분야의 대표 직업(최대 3개) 중
+          고른 직업의 공고 TOP 3. (2026-10-11 변경) 적성 검사·채팅 분석 자동 계산은
+          없어졌고, 선호 추천 분야·선호 근무 지역·경력 구분(전부 마이페이지에서 직접
+          설정) 3가지만으로 추론함. */}
       <section className="rounded-card bg-white p-6 shadow-1 sm:p-8">
         <div className="mb-2 flex items-center justify-between">
           <p className="flex items-center gap-2 text-nav text-ink">
@@ -365,97 +375,107 @@ export default function Jobs() {
           </span>
         </div>
 
-        {/* 추천 직업 3개 — 버튼으로 보여주고, 클릭한 직업에 맞는 공고 3건을 아래에 표시.
-            매칭률(%)은 진단·채팅 결과가 그 세부직무에 얼마나 실렸는지를 그대로 보여줌. */}
-        <div className="mb-4 flex flex-wrap gap-2">
-          {recommendedJobs.map(({ subJob, category }) => {
-            const isActive = selectedJob === subJob
-            const rate = Math.round((combinedSubJobScores[subJob] ?? 0) * 100)
-            return (
-              <button
-                key={subJob}
-                type="button"
-                onClick={() => setSelectedJob(subJob)}
-                aria-pressed={isActive}
-                className={`rounded-pill border-[1.5px] px-4 py-1.5 text-nav transition-colors ${
-                  isActive
-                    ? 'border-coral bg-coral text-white'
-                    : 'border-taupe bg-white text-ink hover:border-coral'
-                }`}
-              >
-                {subJob}
-                <span className={`ml-1.5 text-footer ${isActive ? 'text-white/70' : 'text-taupe'}`}>
-                  {category}
-                </span>
-                {rate > 0 && (
-                  <span
-                    className={`ml-1.5 text-footer font-semibold ${isActive ? 'text-white' : 'text-coral'}`}
+        {recommendedJobs.length === 0 ? (
+          <p className="rounded-btn bg-canvas px-4 py-6 text-center text-[13px] text-slate">
+            아직 선호 추천 분야를 선택하지 않았어요. 마이페이지 "내 정보 수정하기"에서 선택하면 맞춤 공고를
+            보여드려요.
+          </p>
+        ) : (
+          <>
+            {/* 추천 직업(대표 세부직무, 최대 3개) — 버튼으로 보여주고, 클릭한 직업에
+                맞는 공고 3건을 아래에 표시. 매칭률(%)은 더 이상 계산하지 않음(선택한
+                대분류를 대표하는 직무를 그대로 보여주는 것뿐이라 점수 개념이 없음). */}
+            <div className="mb-4 flex flex-wrap gap-2">
+              {recommendedJobs.map(({ subJob, category }) => {
+                const isActive = selectedJob === subJob
+                return (
+                  <button
+                    key={subJob}
+                    type="button"
+                    onClick={() => setSelectedJob(subJob)}
+                    aria-pressed={isActive}
+                    className={`rounded-pill border-[1.5px] px-4 py-1.5 text-nav transition-colors ${
+                      isActive
+                        ? 'border-coral bg-coral text-white'
+                        : 'border-taupe bg-white text-ink hover:border-coral'
+                    }`}
                   >
-                    {rate}%
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-
-        <div className="divide-y divide-canvas-lift">
-          {smartPickJobs.map((job) => {
-            const isMatched = job.subJob === selectedJob
-            const isRegionMatch = hasRegionPreference && job.location.includes(preferredRegion)
-            // URL이 있으면 카드 전체를 새 탭 링크로, 없으면 그냥 div로 — Jobs.jsx
-            // 아래쪽 채용공고 리스트처럼 클릭하면 바로 실제 공고 페이지로 이동함.
-            const hasValidUrl = isValidJobUrl(job.url)
-            const CardTag = hasValidUrl ? 'a' : 'div'
-            return (
-              <CardTag
-                key={job.id}
-                {...(hasValidUrl ? { href: job.url, target: '_blank', rel: 'noopener noreferrer' } : {})}
-                className={`-mx-2 flex items-center gap-4 rounded-btn px-2 py-4 transition-colors first:pt-4 last:pb-4 ${
-                  hasValidUrl ? 'cursor-pointer hover:bg-canvas-lift' : ''
-                }`}
-              >
-                <div
-                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-btn text-nav ${
-                    isMatched ? 'bg-coral-bg text-coral-deep' : 'bg-canvas-lift text-ink-soft'
-                  }`}
-                  aria-hidden="true"
-                >
-                  {job.company.replace(/[()]/g, '').slice(0, 2)}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <p className="flex flex-wrap items-center gap-1.5 text-footer text-slate">
-                    {job.company}
-                    {isMatched ? (
-                      <span className="inline-flex items-center gap-0.5 rounded-pill bg-coral-bg px-2 py-0.5 text-[11px] font-semibold text-coral-deep">
-                        <Star size={10} weight="fill" aria-hidden="true" />
-                        {job.subJob} 매칭
-                      </span>
-                    ) : (
-                      <span className="rounded-pill bg-canvas px-2 py-0.5 text-[11px] text-taupe">관련 공고</span>
-                    )}
-                    {isRegionMatch && (
-                      <span className="inline-flex items-center gap-0.5 rounded-pill bg-ink/5 px-2 py-0.5 text-[11px] font-semibold text-ink">
-                        <MapPin size={10} weight="fill" aria-hidden="true" />
-                        선호 지역
-                      </span>
-                    )}
-                  </p>
-                  <p className="mt-0.5 truncate text-body text-ink">{job.title}</p>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-footer text-slate">
-                    <span>{job.type}</span>
-                    <span className={isRegionMatch ? 'font-semibold text-coral-deep' : undefined}>
-                      {job.location}
+                    {subJob}
+                    <span className={`ml-1.5 text-footer ${isActive ? 'text-white/70' : 'text-taupe'}`}>
+                      {category}
                     </span>
-                  </div>
-                </div>
+                  </button>
+                )
+              })}
+            </div>
 
-                <span className="shrink-0 text-footer text-taupe">{formatDday(job.deadline)}</span>
-              </CardTag>
-            )
-          })}
-        </div>
+            <div className="divide-y divide-canvas-lift">
+              {smartPickJobs.map((job) => {
+                const isMatched = job.subJob === selectedJob
+                const isRegionMatch = hasRegionPreference && job.location.includes(preferredRegion)
+                const isCareerMatch = hasCareerPreference && job.type.includes(preferredCareerLevel)
+                // URL이 있으면 카드 전체를 새 탭 링크로, 없으면 그냥 div로 — Jobs.jsx
+                // 아래쪽 채용공고 리스트처럼 클릭하면 바로 실제 공고 페이지로 이동함.
+                const hasValidUrl = isValidJobUrl(job.url)
+                const CardTag = hasValidUrl ? 'a' : 'div'
+                return (
+                  <CardTag
+                    key={job.id}
+                    {...(hasValidUrl ? { href: job.url, target: '_blank', rel: 'noopener noreferrer' } : {})}
+                    className={`-mx-2 flex items-center gap-4 rounded-btn px-2 py-4 transition-colors first:pt-4 last:pb-4 ${
+                      hasValidUrl ? 'cursor-pointer hover:bg-canvas-lift' : ''
+                    }`}
+                  >
+                    <div
+                      className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-btn text-nav ${
+                        isMatched ? 'bg-coral-bg text-coral-deep' : 'bg-canvas-lift text-ink-soft'
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {job.company.replace(/[()]/g, '').slice(0, 2)}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="flex flex-wrap items-center gap-1.5 text-footer text-slate">
+                        {job.company}
+                        {isMatched ? (
+                          <span className="inline-flex items-center gap-0.5 rounded-pill bg-coral-bg px-2 py-0.5 text-[11px] font-semibold text-coral-deep">
+                            <Star size={10} weight="fill" aria-hidden="true" />
+                            {job.subJob} 매칭
+                          </span>
+                        ) : (
+                          <span className="rounded-pill bg-canvas px-2 py-0.5 text-[11px] text-taupe">관련 공고</span>
+                        )}
+                        {isRegionMatch && (
+                          <span className="inline-flex items-center gap-0.5 rounded-pill bg-ink/5 px-2 py-0.5 text-[11px] font-semibold text-ink">
+                            <MapPin size={10} weight="fill" aria-hidden="true" />
+                            선호 지역
+                          </span>
+                        )}
+                        {isCareerMatch && (
+                          <span className="inline-flex items-center gap-0.5 rounded-pill bg-ink/5 px-2 py-0.5 text-[11px] font-semibold text-ink">
+                            {preferredCareerLevel} 희망
+                          </span>
+                        )}
+                      </p>
+                      <p className="mt-0.5 truncate text-body text-ink">{job.title}</p>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-footer text-slate">
+                        <span className={isCareerMatch ? 'font-semibold text-coral-deep' : undefined}>
+                          {job.type}
+                        </span>
+                        <span className={isRegionMatch ? 'font-semibold text-coral-deep' : undefined}>
+                          {job.location}
+                        </span>
+                      </div>
+                    </div>
+
+                    <span className="shrink-0 text-footer text-taupe">{formatDday(job.deadline)}</span>
+                  </CardTag>
+                )
+              })}
+            </div>
+          </>
+        )}
       </section>
 
       {/* 채용공고 리스트 */}
