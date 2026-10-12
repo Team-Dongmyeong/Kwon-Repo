@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Heartbeat, ChatCircleDots, Briefcase, UserCircle, Megaphone, Compass } from '@phosphor-icons/react'
 import { useAuth } from '../../context/AuthContext.jsx'
 import { usePreference } from '../../context/PreferenceContext.jsx'
-import { ALL_REGION, REMOTE_REGION, REGIONS, CAREER_LEVELS } from '../../constants/jobCategories.js'
+import { JOB_CATEGORIES, ALL_REGION, REMOTE_REGION, REGIONS, CAREER_LEVELS } from '../../constants/jobCategories.js'
 
 // 전부 더미 데이터 — 백엔드(kcELECTRA/SBERT/RAG) 연동 전 화면 확인용.
 const EMOTION_PATTERN = [
@@ -207,28 +207,27 @@ export default function MyPage() {
   const [profileSaved, setProfileSaved] = useState(false)
   const [editingInfo, setEditingInfo] = useState(false)
   const [notifyOn, setNotifyOn] = useState(true)
-  // 선호 추천 분야 = 적성 검사 60% + 채팅 분석 40%로 자동 계산된 값(AppLayout에 올려둔
-  // PreferenceProvider를 구독). 더 이상 직접 입력하는 값이 아니라서 여기엔 그 값을
-  // 읽어오는 코드만 있고, 검사/채팅 화면이 결과를 setTestResult / setChatResult로
-  // 넘겨주기만 하면 이 화면과 채용공고 스마트픽이 동시에 갱신됨.
-  // "진단하기" 박스와 진단 모달은 상단 헤더(Header.jsx)로 옮겨졌음 — 여기서는 값
-  // 표시(및 초기화 버튼)만 함.
+  // 선호 추천 분야 — (2026-10-11 변경) 더 이상 적성 검사·채팅 분석으로 자동
+  // 계산되지 않고, 바로 아래 선호 근무 지역·경력 구분과 같은 방식으로 "내 정보
+  // 수정하기"에서 사용자가 직접 고르는 값으로 바뀜. setPreferredCategory로 고르고,
+  // resetPreference로 미설정 상태로 되돌릴 수 있음.
+  // "진단하기" 박스와 진단 모달은 상단 헤더(Header.jsx)에 있음 — 이제는 결과를
+  // 참고용으로 보여주기만 하고 이 값을 자동으로 바꾸지는 않음.
   const {
     preferredCategory,
     hasPreferenceData,
+    setPreferredCategory,
     resetPreference,
     preferredRegion,
     hasRegionPreference,
     setPreferredRegion,
     careerLevel,
     setCareerLevel,
-    // "추천직업" 탭 전용 — 채용공고 스마트픽과 똑같은 recommendedJobs(세부직무 TOP3)를
-    // 그대로 구독해서 씀. 이 값이 바뀌면(진단/채팅 결과 갱신) 이 탭과 스마트픽이
-    // 항상 같은 3개를 동시에 보여주게 됨 — 둘 다 PreferenceContext라는 같은 소스를
-    // 보고 있어서 별도로 동기화해줄 코드가 필요 없음.
+    // "추천직업" 탭 전용 — 채용공고 스마트픽과 똑같은 recommendedJobs(선호 추천
+    // 분야의 대표 세부직무 최대 3개)를 그대로 구독해서 씀. preferredCategory가
+    // 바뀌면 이 탭과 스마트픽이 항상 동시에 같은 값을 보여주게 됨 — 둘 다
+    // PreferenceContext라는 같은 소스를 보고 있어서 별도로 동기화해줄 코드가 필요 없음.
     recommendedJobs,
-    hasSubJobPreferenceData,
-    combinedSubJobScores,
   } = usePreference()
   // 선호 근무 지역 읽기 전용 표시용 — select의 value는 짧은 표기('서울')라서, 보여줄
   // 땐 REGIONS의 공식 명칭(label, 예: '서울특별시')으로 바꿔서 보여줌. REGIONS에 없는
@@ -349,36 +348,34 @@ export default function MyPage() {
         )}
 
         {/* 추천직업 탭 — 더미데이터가 아니라 채용공고 스마트픽과 완전히 같은
-            recommendedJobs(PreferenceContext)를 그대로 보여줌. 진단 퀴즈를 풀거나
-            채팅 분석 결과가 반영되면(지금은 Jobs.jsx의 테스트 칩으로도 흉내낼 수
-            있음) 이 탭과 스마트픽이 항상 동시에 같은 3개로 갱신됨. */}
+            recommendedJobs(PreferenceContext)를 그대로 보여줌. "내 정보 수정하기"에서
+            선호 추천 분야를 바꾸면 이 탭과 스마트픽이 항상 동시에 같은 값으로 갱신됨.
+            (2026-10-11 변경) 적성 검사·채팅 점수로 계산되던 매칭률(%)은 없어졌고,
+            선택한 대분류를 대표하는 세부직무를 그대로 보여주기만 함. */}
         {activeTab === 'jobs' &&
-          (hasSubJobPreferenceData ? (
+          (hasPreferenceData ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {recommendedJobs.map(({ subJob, category }) => {
-                const rate = Math.round((combinedSubJobScores[subJob] ?? 0) * 100)
-                return (
-                  <div key={subJob} className="flex flex-col justify-between rounded-card bg-white p-6 shadow-1">
-                    <div>
-                      <span className="inline-flex rounded-pill bg-coral-bg px-3 py-1 text-[12px] font-bold text-coral-deep">
-                        매칭률 {rate}%
-                      </span>
-                      <h3 className="mt-3 text-h3 text-[17px] text-ink">{subJob}</h3>
-                      <p className="mt-2 text-[13px] leading-relaxed text-slate">
-                        {category} 분야 진단·채팅 결과를 바탕으로 추천된 직무예요.
-                      </p>
-                    </div>
-                    <Link to={`/home/jobs?job=${encodeURIComponent(subJob)}`} className="btn-secondary mt-5">
-                      공고 확인하기
-                    </Link>
+              {recommendedJobs.map(({ subJob, category }) => (
+                <div key={subJob} className="flex flex-col justify-between rounded-card bg-white p-6 shadow-1">
+                  <div>
+                    <span className="inline-flex rounded-pill bg-coral-bg px-3 py-1 text-[12px] font-bold text-coral-deep">
+                      {category}
+                    </span>
+                    <h3 className="mt-3 text-h3 text-[17px] text-ink">{subJob}</h3>
+                    <p className="mt-2 text-[13px] leading-relaxed text-slate">
+                      선택하신 선호 추천 분야({category})를 대표하는 직무예요.
+                    </p>
                   </div>
-                )
-              })}
+                  <Link to={`/home/jobs?job=${encodeURIComponent(subJob)}`} className="btn-secondary mt-5">
+                    공고 확인하기
+                  </Link>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="rounded-card bg-white p-10 text-center shadow-1">
               <p className="text-body text-slate">
-                아직 진단 결과가 없어요. 화면 상단 "진단하기"에서 간단 진단을 먼저 해보세요.
+                아직 선호 추천 분야를 선택하지 않았어요. "개인정보" 탭의 "내 정보 수정하기"에서 선택해보세요.
               </p>
             </div>
           ))}
@@ -466,13 +463,25 @@ export default function MyPage() {
                 </dl>
               ) : (
                 <form className="mt-4 space-y-4" onSubmit={handleProfileSubmit}>
-                  {/* 선호 추천 분야는 더 이상 여기서 직접 입력하지 않음 — 적성 검사와
-                      채팅 상담 결과를 바탕으로 자동 계산되는 값이라 편집 폼에서 뺐음.
-                      갱신은 상단 헤더의 "진단하기" 박스에서, 초기화는 왼쪽 항목에서. */}
-                  <p className="rounded-btn bg-canvas px-4 py-2.5 text-[13px] text-slate">
-                    선호 추천 분야는 적성 검사·채팅 상담 결과로 자동 설정돼요. 화면 상단 "진단하기" 박스에서
-                    바로 갱신해볼 수 있어요.
-                  </p>
+                  {/* (2026-10-11 변경) 선호 추천 분야도 선호 근무 지역·경력 구분과
+                      똑같이 여기서 직접 고름 — 더 이상 적성 검사·채팅 분석으로 자동
+                      계산되지 않음. 상단 헤더의 "진단하기"는 참고용 결과만 보여줄 뿐
+                      이 값을 바꾸지 않으니, 반영하려면 여기서 직접 선택해야 함. */}
+                  <label className="block text-[13px] font-semibold text-ink">
+                    선호 추천 분야
+                    <select
+                      value={preferredCategory ?? ''}
+                      onChange={(event) => setPreferredCategory(event.target.value || null)}
+                      className="mt-2 w-full rounded-btn border-[1.5px] border-taupe bg-white px-4 py-2.5 text-[14px] font-normal text-ink focus:border-ink focus:outline-none"
+                    >
+                      <option value="">선택 안 함</option>
+                      {JOB_CATEGORIES.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
                   <label className="block text-[13px] font-semibold text-ink">
                     선호 근무 지역
