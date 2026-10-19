@@ -3,18 +3,23 @@ import { Megaphone } from '@phosphor-icons/react'
 // 더미 데이터 — 백엔드 연동 전 프론트 화면 확인용.
 const notices = [
   {
+    badge: '정책',
+    title: '청년정책 기능 업데이트',
+    date: '2026.09.10',
+  },
+  {
     badge: '안내',
     title: '24시간 AI 챗봇 상담 서비스 이용 안내',
     date: '2026.09.05',
   },
   {
     badge: '업데이트',
-    title: '마이페이지 감정 진단 리포트 기능 추가',
+    title: '마이페이지 감정 상태 기능 추가',
     date: '2026.09.02',
   },
   {
     badge: '채용',
-    title: '9월 신입·인턴 채용정보 집중 업데이트',
+    title: '공공기관 채용정보 API 연동 업데이트',
     date: '2026.08.28',
   },
   {

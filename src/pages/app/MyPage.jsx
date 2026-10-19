@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext.jsx'
 import { usePreference } from '../../context/PreferenceContext.jsx'
 import { JOB_CATEGORIES, ALL_REGION, REMOTE_REGION, REGIONS, CAREER_LEVELS } from '../../constants/jobCategories.js'
 import { fetchEmotionSummary } from '../../lib/emotionApi.js'
+import { fetchChatSessions } from '../../lib/chatApi.js'
 
 // [감정상태 탭] 더미 데이터 → 백엔드 GET /emotions/summary 실제 데이터로 교체 (2026-10-12)
 // - 최근 주요 감정 패턴: 최근 30일 채팅에서 KcELECTRA가 분류한 감정 6종(중립 제외) 빈도
@@ -16,12 +17,14 @@ const PERIODS = [
   { key: 'year', label: '1년' },
 ]
 
-// 아직 CHAT_LOG는 더미 데이터 — 채팅로그 탭 연동은 다음 단계.
-const CHAT_LOG = [
-  { tag: '심리 상담', title: '자존감 케어 및 학업 스트레스 상담 세션', meta: '2026.09.07 · 감정 상태: 안정' },
-  { tag: '직업 추천', title: 'SBERT 기반 백엔드/AI 직무 적성 매칭 상담', meta: '2026.09.05 · 키워드 매칭 완료' },
-  { tag: '심리 상담', title: '일상적 무기력감 극복을 위한 행동 진단', meta: '2026.09.01 · 감정 상태: 피로감 관찰' },
-]
+// 날짜 표기 — 채팅로그 세션의 createdAt(ms)을 'YYYY.MM.DD'로.
+function formatSessionDate(timestamp) {
+  const d = new Date(timestamp)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}.${mm}.${dd}`
+}
 
 // 개인정보를 맨 앞으로 — 마이페이지에 들어오면 이 탭이 먼저 보이도록.
 const tabs = [
@@ -219,6 +222,48 @@ export default function MyPage() {
     }
   }, [activeTab, authFetch, user?.id])
 
+  // 채팅로그 탭 데이터 — Chat.jsx와 같은 chatApi.js(fetchChatSessions)를 그대로 써서
+  // 로그인한 계정의 실제 대화 목록(Supabase DB)을 불러옴. 메시지가 하나도 없는
+  // "새 대화"(빈 세션)는 실제로 나눈 대화가 아니므로 목록에서 제외.
+  const [chatSessions, setChatSessions] = useState([])
+  const [chatLogLoading, setChatLogLoading] = useState(false)
+  const [chatLogError, setChatLogError] = useState(null)
+
+  useEffect(() => {
+    if (activeTab !== 'chatlog') return
+    let cancelled = false
+    setChatLogLoading(true)
+    setChatLogError(null)
+    fetchChatSessions(authFetch)
+      .then((data) => {
+        if (cancelled) return
+        const sessions = data
+          .map((s) => ({
+            id: s.id,
+            title: s.title,
+            createdAt: Date.parse(s.created_at),
+            messageCount: s.messages.length,
+          }))
+          .filter((s) => s.messageCount > 0)
+          .sort((a, b) => b.createdAt - a.createdAt)
+        setChatSessions(sessions)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setChatLogError(
+          err?.message === 'SESSION_EXPIRED'
+            ? '로그인이 만료되었어요. 다시 로그인해주세요.'
+            : '대화 기록을 불러오지 못했어요. 잠시 후 다시 시도해주세요.',
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setChatLogLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, authFetch, user?.id])
+
   const emotionPattern =
     emotionSummary?.pattern ?? EMOTION_AXES.map((label) => ({ label, value: 0, ratio: 0, count: 0 }))
   const hasPattern = (emotionSummary?.pattern_total ?? 0) > 0
@@ -399,28 +444,38 @@ export default function MyPage() {
 
         {activeTab === 'chatlog' && (
           <div className="space-y-3">
-            {CHAT_LOG.map((log) => (
-              <div
-                key={log.title}
-                className="flex flex-col gap-3 rounded-card bg-white p-5 shadow-1 sm:flex-row sm:items-center sm:justify-between sm:p-6"
-              >
-                <div>
-                  <span className="inline-flex rounded-pill bg-coral-bg px-3 py-1 text-[12px] font-bold text-coral-deep">
-                    {log.tag}
-                  </span>
-                  <p className="mt-2 font-semibold text-ink">{log.title}</p>
-                  <p className="mt-1 text-[13px] text-slate">{log.meta}</p>
-                </div>
-                <button
-                  type="button"
-                  disabled
-                  title="백엔드 연동 후 이용할 수 있어요"
-                  className="btn-secondary shrink-0 opacity-50"
-                >
-                  대화 보기
-                </button>
+            {chatLogError && (
+              <div className="rounded-btn bg-coral-bg px-4 py-2.5 text-[13px] font-medium text-coral-deep">
+                {chatLogError}
               </div>
-            ))}
+            )}
+            {chatLogLoading && chatSessions.length === 0 ? (
+              <p className="py-10 text-center text-[14px] text-slate">대화 기록을 불러오는 중…</p>
+            ) : chatSessions.length === 0 ? (
+              <div className="rounded-card bg-white p-10 text-center shadow-1">
+                <p className="text-body text-slate">아직 나눈 대화가 없어요. 대화를 시작하면 여기에서 다시 확인할 수 있어요.</p>
+                <Link to="/home/chat" className="btn-accent mt-5 inline-flex">
+                  대화 시작하기
+                </Link>
+              </div>
+            ) : (
+              chatSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="flex flex-col gap-3 rounded-card bg-white p-5 shadow-1 sm:flex-row sm:items-center sm:justify-between sm:p-6"
+                >
+                  <div>
+                    <p className="font-semibold text-ink">{session.title}</p>
+                    <p className="mt-1 text-[13px] text-slate">
+                      {formatSessionDate(session.createdAt)} · 메시지 {session.messageCount}개
+                    </p>
+                  </div>
+                  <Link to={`/home/chat?session=${session.id}`} className="btn-secondary shrink-0">
+                    대화 보기
+                  </Link>
+                </div>
+              ))
+            )}
           </div>
         )}
 
