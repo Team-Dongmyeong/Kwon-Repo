@@ -912,10 +912,11 @@ except ImportError:  # supabase 패키지 버전에 따라 위치가 다름
  
 from contextlib import asynccontextmanager  # [RAG]
 
-from prompts import SYSTEM_PROMPT
+from prompts import SYSTEM_PROMPT, build_context  # [감정임계치] build_context 추가
 from DB.config import supabase  # anon 키 클라이언트 — 토큰 확인(get_user)에 사용
 from DB.supabase_client import register_user
 import rag  # [RAG] backend/rag/ 폴더 (감정 분류 + 검색 + 프롬프트 조립)
+import emotion_state  # [감정점수] 6개 감정 기본 25점 → 상담에 따라 변화
  
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
  
@@ -1202,6 +1203,7 @@ def chat(req: ChatRequest, user_id: str = Depends(get_current_user_id)):
             rag_result = rag.build_rag_context(
                 req.message,
                 prev_job_name=prev_job,
+                has_history=bool(history),  # [감정임계치] 이전 대화 있으면 임계치 0.75, 없으면 0.5
                 recommended_job=None,  # TODO: 추천직업 테스트 결과를 DB에 저장한다면 여기에 연결
                 postings_provider=_postings_for,
             )
@@ -1212,7 +1214,10 @@ def chat(req: ChatRequest, user_id: str = Depends(get_current_user_id)):
     if rag_result is not None and rag_result.fixed_reply:
         reply = rag_result.fixed_reply  # 위기 표현 → 안전 안내 (GPT 호출 안 함)
     else:
-        system_prompt = rag_result.system_prompt if rag_result else SYSTEM_PROMPT
+        system_prompt = (
+            rag_result.system_prompt if rag_result
+            else SYSTEM_PROMPT + "\n\n" + build_context()  # [감정임계치] RAG 없을 때: 분석 값은 '확인 안 됨'
+        )
         messages = (
             [{"role": "system", "content": system_prompt}]
             + history
@@ -1281,19 +1286,28 @@ def _message_score(emotion: str, conf) -> float:
     return EMOTION_VALENCE.get(emotion, 0) * c
 
 
-def _bucket_points(rows: list, key_fn, label_fn) -> dict:
-    """rows를 key_fn으로 묶어 구간별 점수(0~100) 계산. 대화가 없는 구간은 건너뜀."""
+PSYCH_BASE_SCORE = 50  # [감정점수] 심리상태 기본 점수 (상담 기록이 없을 때). 0=부정적 · 50=보통 · 100=긍정적
+
+
+def _bucket_points(rows: list, key_fn, label_fn, all_keys=None) -> dict:
+    """rows를 key_fn으로 묶어 구간별 점수(0~100) 계산.
+    [감정점수] all_keys를 주면 대화가 없는 구간도 채움 → 기본 점수(또는 직전 구간 점수)를 이어서 표시"""
     buckets = {}
     for r in rows:
         k = key_fn(r["_dt"])
         if k is None:
             continue
         buckets.setdefault(k, []).append(_message_score(r["emotion"], r.get("emotion_conf")))
-    keys = sorted(buckets)
+    keys = list(all_keys) if all_keys is not None else sorted(buckets)
+    points, last = [], PSYCH_BASE_SCORE
+    for k in keys:
+        if buckets.get(k):
+            last = round(50 + 50 * sum(buckets[k]) / len(buckets[k]))
+        points.append(last)
     return {
         "dates": [label_fn(k) for k in keys],
-        "points": [round(50 + 50 * sum(buckets[k]) / len(buckets[k])) for k in keys],
-        "counts": [len(buckets[k]) for k in keys],
+        "points": points,
+        "counts": [len(buckets.get(k, [])) for k in keys],
     }
 
 
@@ -1326,23 +1340,27 @@ def emotion_summary(user_id: str = Depends(get_current_user_id)):
     for r in rows:
         r["_dt"] = _parse_ts(r["created_at"])
 
-    # ① 최근 30일 감정 패턴 — 가장 많이 나온 감정을 100으로 두고 나머지를 비율로 표시
+    # ① 최근 30일 감정 패턴
+    # [감정점수] 6개 감정 모두 기본 25점에서 시작 → 최근 30일 상담 메시지 순서대로 점수 재배분.
+    #           상담 기록이 없으면 6개 모두 25. value(0~100) = 육각형 그래프 값.
     recent = [r for r in rows if (today - r["_dt"].date()).days < PATTERN_DAYS]
+    scores = emotion_state.replay(recent)
     counts = {e: 0 for e in EMOTION_AXES}
     for r in recent:
         if r["emotion"] in counts:
             counts[r["emotion"]] += 1
     pattern_total = sum(counts.values())
-    max_count = max(counts.values()) if pattern_total else 0
     pattern = [
         {
             "label": e,
             "count": counts[e],
             "ratio": round(counts[e] / pattern_total * 100) if pattern_total else 0,
-            "value": round(counts[e] / max_count * 100) if max_count else 0,
+            "value": round(scores[e]),   # [감정점수] 기본 25, 상담에 따라 변화
+            "score": scores[e],          # [감정점수] 소수 1자리 값
         }
         for e in EMOTION_AXES
     ]
+    dominant = max(scores, key=scores.get) if len(set(scores.values())) > 1 else None
 
     # ② 심리상태 추이
     def week_key(dt):  # 최근 7일, 하루 단위
@@ -1357,16 +1375,30 @@ def emotion_summary(user_id: str = Depends(get_current_user_id)):
         months = (today.year - dt.year) * 12 + (today.month - dt.month)
         return (dt.year, dt.month) if months < 12 else None
 
+    # [감정점수] 대화가 없는 날/주/월도 빠짐없이 표시 (상담 전에는 전부 기본 점수)
+    week_keys = [today - timedelta(days=i) for i in range(6, -1, -1)]
+    month_keys = [-3, -2, -1, 0]
+    year_keys = []
+    y, mth = today.year, today.month
+    for _ in range(12):
+        year_keys.append((y, mth))
+        y, mth = (y, mth - 1) if mth > 1 else (y - 1, 12)
+    year_keys.reverse()
+
     trend = {
-        "week": _bucket_points(rows, week_key, lambda d: d.strftime("%m/%d")),
+        "week": _bucket_points(rows, week_key, lambda d: d.strftime("%m/%d"), week_keys),
         "month": _bucket_points(
-            rows, month_key, lambda k: (today + timedelta(days=7 * k)).strftime("%m/%d")
+            rows, month_key, lambda k: (today + timedelta(days=7 * k)).strftime("%m/%d"), month_keys
         ),
-        "year": _bucket_points(rows, year_key, lambda k: f"{k[0]}/{k[1]:02d}"),
+        "year": _bucket_points(rows, year_key, lambda k: f"{k[0]}/{k[1]:02d}", year_keys),
     }
 
     return {
         "pattern": pattern,
+        "base_score": emotion_state.BASE_SCORE,  # [감정점수] 감정 기본 점수 25
+        "is_default": not recent,                # [감정점수] True면 최근 30일 상담 기록이 없어 전부 기본값
+        "dominant": dominant,                    # [감정점수] 가장 높은 감정 (전부 같으면 None)
+        "psych_base_score": PSYCH_BASE_SCORE,    # [감정점수] 심리상태 기본 점수 50
         "pattern_total": pattern_total,          # 최근 30일, 중립 제외 메시지 수
         "recent_message_count": len(recent),     # 최근 30일, 중립 포함 메시지 수
         "trend": trend,
