@@ -39,7 +39,6 @@ class RagResult:
     system_prompt: Optional[str] = None   # None이면 GPT 호출 없이 fixed_reply 사용
     fixed_reply: Optional[str] = None
     meta: dict = field(default_factory=dict)   # chat_messages(사용자 메시지 행)에 함께 저장
-    emotion_probs: dict = field(default_factory=dict)   # 7개 감정 확률 → 마이페이지 감정 점수 갱신용 (DB 컬럼 아님)
 
 
 def build_rag_context(
@@ -102,7 +101,6 @@ def build_rag_context(
     system_prompt = build_system_prompt(emotion, concern, jobs, docs, is_anxious=is_anxious)
     return RagResult(
         system_prompt=system_prompt,
-        emotion_probs=emo_probs,
         meta={
             "emotion": emotion,
             "emotion_conf": round(emo_conf, 4),

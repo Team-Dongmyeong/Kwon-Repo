@@ -1,4 +1,3 @@
-# 프로젝트의 backend 폴더에서 prompts.py 수정사항
 """마음잇기 상담 프롬프트 (최종 구조 기준)
 
 구성
@@ -6,6 +5,7 @@
 - build_context(): 요청마다 달라지는 값(감정 라벨, 고민 유형, 직무, RAG 검색 결과, 응답 우선순위)을
                    한 덩어리 텍스트로 만들어 주는 함수. system 메시지 뒤에 붙이거나,
                    마지막 user 메시지 앞에 별도 system 메시지로 넣는다.
+- 감정 점수 임계치: 부정 감정 점수가 임계치 이상이면 '감정 케어 우선'으로 응답한다.
 """
 
 SYSTEM_PROMPT = """당신은 '마음잇기'의 AI 취업 상담사입니다. 청년 구직자의 감정과 취업 고민을 함께 살피며,
@@ -46,6 +46,9 @@ SYSTEM_PROMPT = """당신은 '마음잇기'의 AI 취업 상담사입니다. 청
   (자살예방상담전화 109)에 도움을 요청하도록 따뜻하게 권하고, 그 대화에서는 취업 조언을 이어 가지 마세요.
 """
 
+# 이전 코드(rag/prompt.py 등)가 BASE_PROMPT 이름으로 불러와도 오류가 나지 않도록 남겨 둠
+BASE_PROMPT = SYSTEM_PROMPT
+
 CONTEXT_TEMPLATE = """[분석 결과]
 - 감정: {emotion}
 - 고민 유형: {concern_type}
@@ -60,11 +63,45 @@ CONTEXT_TEMPLATE = """[분석 결과]
 NO_RAG = "(이 고민 유형은 검색을 사용하지 않거나, 검색된 정보가 없습니다.)"
 
 
+# ============================================================
+# 감정 점수 임계치 (출력 제어 로직)
+#   부정 감정 점수 = KcELECTRA가 준 확률 중 '공포+슬픔+분노+혐오'의 합 (0~1)
+#   부정 감정 점수 >= 임계치  →  is_anxious=True  →  '감정 케어 우선'
+#
+#   - 대화 첫 메시지(이전 대화 내역 없음): 기본 임계치 0.5
+#   - 이전 대화 내역이 있는 경우          : 임계치 0.75
+#     (대화가 이어지는 중에는 감정이 꽤 강할 때만 감정 케어로 전환해서,
+#      매 답변이 위로로만 시작하지 않고 취업 조언이 이어지도록 함)
+# ============================================================
+NEGATIVE_EMOTIONS = ("공포", "슬픔", "분노", "혐오")
+EMOTION_THRESHOLD_DEFAULT = 0.5
+EMOTION_THRESHOLD_WITH_HISTORY = 0.75
+
+
+def emotion_threshold(has_history: bool) -> float:
+    """대화 내역 유무에 따라 적용할 임계치"""
+    return EMOTION_THRESHOLD_WITH_HISTORY if has_history else EMOTION_THRESHOLD_DEFAULT
+
+
+def negative_score(probs) -> float:
+    """감정별 확률 dict → 부정 감정 점수 (확률이 없으면 0.0)"""
+    if not probs:
+        return 0.0
+    return float(sum(probs.get(label, 0.0) for label in NEGATIVE_EMOTIONS))
+
+
+def decide_anxious(probs, has_history: bool = False) -> tuple:
+    """→ (is_anxious, 부정 감정 점수, 적용한 임계치)"""
+    score = negative_score(probs)
+    threshold = emotion_threshold(has_history)
+    return score >= threshold, score, threshold
+
+
 def build_context(emotion=None, concern_type=None, job_name=None,
                   rag_context=None, is_anxious=False, is_crisis=False):
     """요청마다 달라지는 분석 결과와 검색 결과를 프롬프트용 텍스트로 만든다.
 
-    is_anxious : 출력 제어 로직(부정 감정 점수 >= 임계치)의 결과
+    is_anxious : 출력 제어 로직(부정 감정 점수 >= 임계치)의 결과 — decide_anxious()로 계산
     rag_context: RAG로 검색한 직무 정보 텍스트 (없으면 None 또는 빈 문자열)
     """
     return CONTEXT_TEMPLATE.format(
