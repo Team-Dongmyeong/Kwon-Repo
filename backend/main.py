@@ -74,7 +74,7 @@ app = FastAPI(title="마음잇기 Chat API", lifespan=lifespan)
  
 _default_origins = [
     "http://localhost:5173",
-    "https://maeum-connection.vercel.app",
+    "https://kwon-repo-hwai.vercel.app",
 ]
 _extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 allow_origins = _default_origins + _extra_origins
@@ -82,8 +82,8 @@ allow_origins = _default_origins + _extra_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    # 배포마다 새로 생기는 Vercel 주소(maeum-connection.vercel.app 등)도 허용
-    allow_origin_regex=r"https://maeum-connection(-[a-z0-9-]+)?\.vercel\.app",
+    # 배포마다 새로 생기는 Vercel 주소(kwon-repo-hwai-xxxx-45888.vercel.app 등)도 허용
+    allow_origin_regex=r"https://kwon-repo-hwai(-[a-z0-9-]+)?\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],  # Authorization 헤더 포함
@@ -402,7 +402,35 @@ def _message_score(emotion: str, conf) -> float:
     return EMOTION_VALENCE.get(emotion, 0) * c
 
 
-PSYCH_BASE_SCORE = 50  # [감정점수] 심리상태 기본 점수 (상담 기록이 없을 때). 0=부정적 · 50=보통 · 100=긍정적
+PSYCH_BASE_SCORE = 25  # [감정점수] 심리상태 기본 점수 (상담 기록이 없을 때) — 감정 기본 점수와 같은 25
+
+
+def _signup_date(user_id: str):
+    """[감정점수] 가입 날짜(KST). 심리상태 추이에서 가입일 이전 날짜는 표시하지 않기 위해 사용.
+    1순위 Supabase 로그인 계정(auth.users)의 created_at, 2순위 profiles.created_at. 둘 다 없으면 None(제한 없음)."""
+    candidates = []
+    try:
+        res = db.auth.admin.get_user_by_id(user_id)  # service_role 키 필요
+        candidates.append(getattr(getattr(res, "user", None), "created_at", None))
+    except Exception as e:
+        print(f"[감정점수] 가입일 조회(auth) 실패: {e!r}")
+    try:
+        rows = db.table("profiles").select("*").eq("id", user_id).execute().data
+        if rows:
+            candidates.append(rows[0].get("created_at"))
+    except Exception as e:
+        print(f"[감정점수] 가입일 조회(profiles) 실패: {e!r}")
+    for value in candidates:
+        if not value:
+            continue
+        try:
+            if isinstance(value, datetime):
+                dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                return dt.astimezone(_EMO_KST).date()
+            return _parse_ts(str(value)).date()
+        except Exception:
+            continue
+    return None
 
 
 def _bucket_points(rows: list, key_fn, label_fn, all_keys=None) -> dict:
@@ -501,6 +529,14 @@ def emotion_summary(user_id: str = Depends(get_current_user_id)):
         y, mth = (y, mth - 1) if mth > 1 else (y - 1, 12)
     year_keys.reverse()
 
+    # [감정점수] 가입일 이전 구간은 빼고 가입일부터 표시
+    signup = _signup_date(user_id)
+    if signup:
+        signup = min(signup, today)  # 시간대 차이로 가입일이 오늘보다 뒤로 계산되는 경우 방지
+        week_keys = [d for d in week_keys if d >= signup]
+        month_keys = [k for k in month_keys if today + timedelta(days=7 * k) >= signup]  # 그 주의 마지막 날 기준
+        year_keys = [k for k in year_keys if k >= (signup.year, signup.month)]
+
     trend = {
         "week": _bucket_points(rows, week_key, lambda d: d.strftime("%m/%d"), week_keys),
         "month": _bucket_points(
@@ -514,7 +550,8 @@ def emotion_summary(user_id: str = Depends(get_current_user_id)):
         "base_score": emotion_state.BASE_SCORE,  # [감정점수] 감정 기본 점수 25
         "is_default": not recent,                # [감정점수] True면 최근 30일 상담 기록이 없어 전부 기본값
         "dominant": dominant,                    # [감정점수] 가장 높은 감정 (전부 같으면 None)
-        "psych_base_score": PSYCH_BASE_SCORE,    # [감정점수] 심리상태 기본 점수 50
+        "psych_base_score": PSYCH_BASE_SCORE,    # [감정점수] 심리상태 기본 점수 25
+        "signup_date": signup.isoformat() if signup else None,  # [감정점수] 가입일 (이 날부터 추이 표시)
         "pattern_total": pattern_total,          # 최근 30일, 중립 제외 메시지 수
         "recent_message_count": len(recent),     # 최근 30일, 중립 포함 메시지 수
         "trend": trend,
