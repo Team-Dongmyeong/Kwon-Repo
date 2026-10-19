@@ -1,4 +1,4 @@
-프로젝트의 backend 폴더에서 prompts.py 수정사항
+# 프로젝트의 backend 폴더에서 prompts.py 수정사항
 """마음잇기 상담 프롬프트 (최종 구조 기준)
 
 구성
