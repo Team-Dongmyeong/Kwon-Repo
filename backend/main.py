@@ -74,7 +74,7 @@ app = FastAPI(title="마음잇기 Chat API", lifespan=lifespan)
  
 _default_origins = [
     "http://localhost:5173",
-    "https://kwon-repo-hwai.vercel.app",
+    "https://maeum-connection.vercel.app",
 ]
 _extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 allow_origins = _default_origins + _extra_origins
@@ -82,8 +82,8 @@ allow_origins = _default_origins + _extra_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    # 배포마다 새로 생기는 Vercel 주소(kwon-repo-hwai-xxxx-45888.vercel.app 등)도 허용
-    allow_origin_regex=r"https://kwon-repo-hwai(-[a-z0-9-]+)?\.vercel\.app",
+    # 배포마다 새로 생기는 Vercel 주소(maeum-connection-xxxx-45888.vercel.app 등)도 허용
+    allow_origin_regex=r"https://maeum-connection(-[a-z0-9-]+)?\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],  # Authorization 헤더 포함
