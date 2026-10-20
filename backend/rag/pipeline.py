@@ -104,6 +104,7 @@ def build_rag_context(
         meta={
             "emotion": emotion,
             "emotion_conf": round(emo_conf, 4),
+            "emotion_probs": {k: round(v, 4) for k, v in emo_probs.items()},  # [감정점수] 7개 감정 확률 전부
             "concern_type": concern,
             "job_name": main_job["job_name"] if main_job else None,
             "retrieved_ids": [d["id"] for d in docs],
