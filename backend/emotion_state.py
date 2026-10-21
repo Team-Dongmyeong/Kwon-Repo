@@ -19,6 +19,8 @@
 """
 from __future__ import annotations
 
+import unicodedata
+
 EMOTIONS = ("공포", "놀람", "분노", "슬픔", "행복", "혐오")   # 중립 제외 6개 (육각형 축)
 ALL_LABELS = EMOTIONS + ("중립",)
 BASE_SCORE = 25.0      # 모든 감정의 기본 점수 (0.25)
@@ -44,14 +46,26 @@ def probs_from_label(emotion, conf) -> dict:
     return {label: (c if label == emotion else rest) for label in ALL_LABELS}
 
 
+def _norm_key(key) -> str:
+    """'\ufeff공포'처럼 보이지 않는 글자가 붙은 감정 이름 → '공포'"""
+    text = str(key)
+    for ch in ("\ufeff", "\u200b", "\u200c", "\u200d", "\u2060", "\xa0"):
+        text = text.replace(ch, "")
+    return unicodedata.normalize("NFC", text).strip()
+
+
 def clean_probs(probs) -> dict:
-    """모델/GPT가 준 확률 dict → 7개 라벨, 0~1, 합 1로 정리 (이상하면 빈 dict)"""
+    """모델/GPT가 준 확률 dict → 7개 라벨, 0~1, 합 1로 정리 (이상하면 빈 dict)
+    [감정점수] 이미 DB에 '숨은 글자가 붙은 공포'로 저장된 기록도 '공포'로 읽음"""
     if not isinstance(probs, dict):
         return {}
+    fixed = {}
+    for key, value in probs.items():
+        fixed[_norm_key(key)] = value
     out = {}
     for label in ALL_LABELS:
         try:
-            out[label] = max(0.0, float(probs.get(label, 0.0) or 0.0))
+            out[label] = max(0.0, float(fixed.get(label, 0.0) or 0.0))
         except (TypeError, ValueError):
             out[label] = 0.0
     total = sum(out.values())
