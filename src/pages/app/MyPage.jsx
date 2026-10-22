@@ -418,13 +418,13 @@ export default function MyPage() {
 
               {trend.points.length > 0 ? (
                 <>
-                  <div className="relative mt-4">
-                    <div className="pointer-events-none absolute left-1 top-1 z-10 rounded-btn bg-coral-bg px-2 py-1 text-[11px] font-bold text-coral-deep">
-                      좋음 (100)
-                    </div>
-                    <div className="pointer-events-none absolute bottom-6 left-1 z-10 rounded-btn bg-canvas px-2 py-1 text-[11px] font-bold text-slate">
-                      나쁨 (0)
-                    </div>
+                  <div className="relative mt-4 pl-20">
+  <div className="pointer-events-none absolute left-0 top-1 z-10 rounded-btn bg-coral-bg px-2 py-1 text-[11px] font-bold text-coral-deep">
+    좋음 (100)
+  </div>
+  <div className="pointer-events-none absolute bottom-6 left-0 z-10 rounded-btn bg-canvas px-2 py-1 text-[11px] font-bold text-slate">
+    나쁨 (0)
+  </div>
                     <TrendChart dates={trend.dates} points={trend.points} />
                   </div>
                   <p className="mt-2 text-[12px] leading-relaxed text-slate">
